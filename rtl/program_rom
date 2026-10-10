@@ -1,0 +1,98 @@
+`timescale 1ns / 1ps
+
+module program_rom (
+    input      [2:0]   sel,
+    output reg [127:0] image
+);
+    reg [7:0] p [0:15];
+    integer i;
+
+    // two-input template: IN x, show x, IN y, show y, x <op> y, show result
+    task two_input;
+        input [7:0] op_byte;   // ALU instruction with operand 15, e.g. 8'h2F = ADD 15
+        begin
+            p[0] = 8'h60;      // IN         A = x  (wait for user)
+            p[1] = 8'hE0;      // OUT        show x
+            p[2] = 8'h4E;      // STA 14     x
+            p[3] = 8'h60;      // IN         A = y  (wait for user)
+            p[4] = 8'hE0;      // OUT        show y
+            p[5] = 8'h4F;      // STA 15     y
+            p[6] = 8'h1E;      // LDA 14     A = x
+            p[7] = op_byte;    // <op> 15    A = x <op> y
+            p[8] = 8'hE0;      // OUT        show result
+            p[9] = 8'hF0;      // HLT
+        end
+    endtask
+
+    always @(*) begin
+        for (i = 0; i < 16; i = i + 1)
+            p[i] = 8'h00;
+
+        case (sel)
+        // ---------------- 1: Fibonacci up to 233 ----------------
+        3'd1: begin
+            p[0]  = 8'h1F;  // LDA 15     A = b
+            p[1]  = 8'hE0;  // OUT        show b
+            p[2]  = 8'hBD;  // XOR 13     A = b ^ 233 (zero when b == 233)
+            p[3]  = 8'hCB;  // JZ  11     stop after 233
+            p[4]  = 8'h1F;  // LDA 15     A = b
+            p[5]  = 8'h2E;  // ADD 14     A = a + b
+            p[6]  = 8'h4E;  // STA 14     a = a + b
+            p[7]  = 8'hE0;  // OUT        show a
+            p[8]  = 8'h2F;  // ADD 15     A = a + b
+            p[9]  = 8'h4F;  // STA 15     b = a + b
+            p[10] = 8'h51;  // JMP 1
+            p[11] = 8'hF0;  // HLT
+            p[13] = 8'd233; // stop value
+            p[14] = 8'd0;   // a
+            p[15] = 8'd1;   // b
+        end
+
+        3'd2: two_input(8'h2F);   // ADD 15  : x + y
+        3'd3: two_input(8'h3F);   // SUB 15  : x - y (negative wraps, 5-10 = 251)
+        3'd4: two_input(8'h9F);   // AND 15  : x & y
+        3'd5: two_input(8'hBF);   // XOR 15  : x ^ y
+
+        // ---------------- 6: MULTIPLY a x b (repeated add) ----------------
+        3'd6: begin
+            p[0]  = 8'h60;  // IN         A = a
+            p[1]  = 8'h4E;  // STA 14     a
+            p[2]  = 8'h60;  // IN         A = b (loop counter)
+            p[3]  = 8'h4F;  // STA 15     counter = A      <- loop
+            p[4]  = 8'h1D;  // LDA 13     A = product
+            p[5]  = 8'h2E;  // ADD 14     A = product + a
+            p[6]  = 8'h4D;  // STA 13     product = A
+            p[7]  = 8'hE0;  // OUT        show running product
+            p[8]  = 8'h1F;  // LDA 15     A = counter
+            p[9]  = 8'h3C;  // SUB 12     counter - 1 (sets zero flag)
+            p[10] = 8'hD3;  // JNZ 3      loop while counter != 0
+            p[11] = 8'hF0;  // HLT
+            p[12] = 8'd1;   // const 1
+            p[13] = 8'd0;   // product
+        end
+
+        // ---------------- 7: DIVIDE a / b (repeated subtract) ----------------
+        3'd7: begin
+            p[0]  = 8'h60;  // IN         A = dividend
+            p[1]  = 8'h4D;  // STA 13     remainder = dividend
+            p[2]  = 8'h60;  // IN         A = divisor
+            p[3]  = 8'h4F;  // STA 15     divisor
+            p[4]  = 8'h71;  // LDI 1      A = 1            <- loop
+            p[5]  = 8'h2E;  // ADD 14     A = quotient + 1
+            p[6]  = 8'h4E;  // STA 14     quotient = A
+            p[7]  = 8'hE0;  // OUT        show quotient
+            p[8]  = 8'h1D;  // LDA 13     A = remainder
+            p[9]  = 8'h3F;  // SUB 15     remainder - divisor (sets zero flag)
+            p[10] = 8'h4D;  // STA 13     remainder = A
+            p[11] = 8'hD4;  // JNZ 4      loop until remainder == 0
+            p[12] = 8'hF0;  // HLT
+            p[14] = 8'd0;   // quotient
+        end
+
+        default: ;          // 0: custom mode, no preset
+        endcase
+
+        for (i = 0; i < 16; i = i + 1)
+            image[i*8 +: 8] = p[i];
+    end
+endmodule
